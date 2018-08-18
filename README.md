@@ -7,7 +7,7 @@ I don't consider this a finished script for people to use, but if someone wants 
 
 Eventually the featues of this script will be folded into my Alarm Clock Radio's GUI.
 
-More detailed instructions can be found here: https://sites.google.com/site/cartwrightraspberrypiprojects/song-player
+More detailed instructions can be found here: hhttps://sites.google.com/site/cartwrightraspberrypiprojects/internet-radio-player
 
 I use two directories on the Raspberry Pi:
 * /home/pi/Stations
