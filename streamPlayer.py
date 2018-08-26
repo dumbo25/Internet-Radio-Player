@@ -4,7 +4,7 @@
 #########################
 #
 # streamPlayer.py is a python3 script to play internet radio using mpd
-# and mpc. Stations are stored in the directory /home/pi/Stations
+# and mpc.
 #
 # One goal of writing this script was to understand how these commands
 # could be used in a larger alarm clock radio project to play internet
@@ -52,11 +52,16 @@
 #          /var/log/mpd/mpd.log
 #          /home/pi/radio/streamPlayer.log
 #
-#       Playlists are stored here:
-#          /var/lib/mpd/playlists
+#       MPD playlists won't work for streaming radio:
+#          created a data structure to store a streaming playlist
+#          mpd only keeps the stream. Want to search on the description
 #
 #       Stations are stored here:
 #          /home/pi/Stations
+#
+#       MPD playlists are different than streaming radio station playlists.
+#       Streaming radio playlists are stored here:
+#          /home/pi/Stations/playlists
 #
 #       commands to control/examine mpd service
 #          $ sudo service mpd stop
@@ -88,8 +93,10 @@ import subprocess
 fileLog = open('/home/pi/radio/streamPlayer.log', 'w+')
 currentStationConfig = '/home/pi/radio/streamPlayer.conf'
 tempStationFile = '/home/pi/radio/streamPlayer.tmp'
+allStationsFile = '/home/pi/Stations/playlists/all_stations.m3u'
 
 directoryStations = "/home/pi/Stations"
+directoryPlaylist = "/home/pi/Stations/playlists"
 
 defaultVolume = 60
 currentVolume = defaultVolume
@@ -103,11 +110,17 @@ muteVolume = False
 defaultPlaylist = "all_stations"
 currentPlaylist = defaultPlaylist
 
+# data structure to store radio stations: station, brief, long and stream
+# mpd doesn't store enough meaningful information in the playlist
+stationList = list()
+
 # Instead of starting with the first station every time, remember last station
 # played or get current station playing and start playing it
 # ??? if exit with x, then get currently playing stream when restarting rather than
 #     last known station to be playing ???
+# currentStation is an index into stationList
 currentStation = ""
+cStation = 0
 
 # On commands like play, prev and next, mpc outputs a line similar to:
 #
@@ -181,6 +194,40 @@ def readStreamPlayerConfig():
     subprocess.call(cmd, shell=True)
     return
 
+def incrementCurrentStation(i):
+    global stationList
+    global cStation
+
+    last = len(stationList)
+    cStation = cStation + i
+
+    if cStation < 0:
+        cStation = 0
+    if cStation >= last:
+        cStation = last-1
+
+def switchStation(station):
+    global stationList
+
+    last = len(stationList)
+    if station < 0:
+        station = 0
+    if station >= last:
+        station = last-1
+
+    cmd = 'mpc clear'
+    subprocess.call(cmd, shell=True)
+
+    stream = stationList[station][3]
+    print("Station = " + stationList[station][0] + ", " + stationList[station][1])
+    cmd = 'mpc insert "' + stream + '"' + limitMPCoutput
+    subprocess.call(cmd, shell=True)
+
+    cmd = "mpc play "  + limitMPCoutput
+    subprocess.call(cmd, shell=True)
+
+    return
+
 def writeStreamPlayerTxt():
     global currentStation
 
@@ -199,6 +246,25 @@ def writeStreamPlayerTxt():
     f.close()
 
 def init():
+    global stationList
+
+    # on start up initialize the station list
+    stationList = list()
+
+    # open all stations and fill in the stationList data structure
+    f = open(allStationsFile, 'r')
+
+    print("Loading stations")
+    for line in f:
+        line = line.strip()
+        if line:
+            # line is not blank
+            l = line.split(',') 
+            d = (l[0],l[1],l[2],l[3])
+            stationList.append(d)
+
+    f.close()
+
     readStreamPlayerConfig()
 
     print("volume = [" + str(currentVolume) + "]")
@@ -207,73 +273,17 @@ def init():
 
     if currentStation == "":
         cmd = "mpc play " + limitMPCoutput
+        subprocess.call(cmd, shell=True)
     else:
-        cmd = 'mpc searchplay title "' + currentStation + '"' + limitMPCoutput
-
-    subprocess.call(cmd, shell=True)
+        switchStation(cStation)
     return
-
-# Insert music from my Apple library into mpd and save it as a playlist
-def initPlaylist(playlist_name):
-    global currentPlaylist
-
-    cmd = "mpc clear" + limitMPCoutput
-    subprocess.call(cmd, shell=True)
-
-    fileCount = 0
-
-    print("Loading streams takes a few minutes. Please wait for > prompt")
-    for file in os.listdir(directoryStations):
-        if file.endswith(".m3u"):
-            fileName = os.path.join(directoryStations, file)
-            print(str(fileCount) + ": " + fileName)
-            i = 0
-            good = False
-            f = open(fileName, 'r')
-            for line in f:
-                line = line.strip()
-                print("   line = " + line)
-                if line:
-                    # line is not blank
-                    if line.startswith('#'):
-                        if i == 0:
-                            if line.startswith('#EXTM3U: good'):
-                                good = True
-                        i += 1
-                    elif i == 2:
-                        # line 2 is the station
-                        if good:
-                            fileCount += 1
-                            print(str(fileCount) + ": " + fileName)
-                            cmd = 'mpc insert ' + '"' + line + '"'
-                            subprocess.call(cmd, shell=True)
-
-            f.close()
-
-    currentPlaylist = playlist_name
-    return
-
-def removePlaylist(p):
-    if p == defaultPlaylist:
-        print("Cannot remove default playlist: " + defaultPlaylist)
-    else:
-        print ("Stopping ...")
-        cmd = "mpc stop " + limitMPCoutput
-        subprocess.call(cmd, shell=True)
-        print("Remove playlist " + p)
-        cmd = "mpc rm " + p + limitMPCoutput
-        subprocess.call(cmd, shell=True)
-        cmd = "mpc clear --wait " + limitMPCoutput
-        subprocess.call(cmd, shell=True)
-
-        initPlaylist(defaultPlaylist)
 
 
 def printMenu():
     print (" ")
     print ("Stream Commands:")
-    print ("   >[=n]  Play, where n is the stream number")
-    print ("          n is optional and by default plays the current stream")
+    print ("   >[=n]  Play, where n is the station number")
+    print ("          n is optional and by default plays the current station")
     print ("   !      Pause")
     print ("   p      Previous")
     print ("   n      Next")
@@ -281,50 +291,27 @@ def printMenu():
     print ("   m      Mute volume toggle")
     print ("   +      Increase volume")
     print ("   -      Decrease volume")
-    print ("Playlist Commands:")
-    print ("?   a=f    Add stream named f from Stations directory to playlist")
-    print ("          include .m3u extension. Do not escape or quote")
-    print ("??   d[=n]  Delete stream numbered n from playlist")
-    print ("          n is optional and the default is the current stream")
-    print ("   C      Current playlist")
-    print ("   D      Delete all streams from the playlist")
+    print ("Station Commands:")
+    print ("   C      Current station")
     print ("   f=s    Find and play the first stream containing the string s")
     print ("          escape spaces and other character with backslash")
-    print ("          ??? f=s is broken")
-    print ("??   I[=n]  Initialize playlist from Stations directory")
-    print ("          n is optional and by default n = all_stations")
-    print ("??? need a better description of the station ???")
-    print ("?   L=n    Load playlist named n")
-    print ("           ??? L=n does what I is supposed to do ") 
-    print ("   P      List playlists")
-    print ("   R[=n]  Remove playlist named n")
-    print ("          n is optional and the default is current playlist")
-    print ("   s[=s]  Show all streams or just streams containing the string s")
+    print ("   s[=s]  Show all stations or just station descriptions containing the string s")
     print ("          escape spaces and other character with backslash")
-    print ("          ??? this need to work on descriptive names and not stream")
-    print ("   S[=n]  Save playlist named n")
-    print ("          n is optional and the default is current playlist")
-    print ("          ??? S by itself does not work ")
     print ("Exit Commands")
     print ("   o      Shut raspberry pi off")
     print ("   x      Exit and leave music playing")
     print (" Return   Press Enter or Return key to exit and turn off music")
-    print (" ??? mpd.config has errors in /var/log/mpd/mpd.log ???")
-    print (" ???   alsa_mixer: Failed to read mixer for amixer: no such mixer ...")
-    print (" ???   output: Failed to open mixer for amixer")
-    print (" ???   ffmpeg/mov,mp4,m4a,3gp,3g2,mj2: stream 0, timescale not set ")
-    print (" ???   ffmpeg/aac: Could not update timestamps for skipped samples ")
 
 #########################
 
 printMsg("Starting streamPlayer")
-print("If after reboot, mpd loads last playlist. Please wait ...")
+print("If after reboot, mpd loads last station or playlist. Please wait ...")
 
 try:
 
+    ans = True
     init()
 
-    ans = True
     while ans:
         printMenu()
 
@@ -334,11 +321,9 @@ try:
         if ans != "" and ans[0] == ">":
             ans2 = ans[1:]
             if ans2 != "" and ans[1] == "=":
-                # play stream number n
+                # play station number n
                 s = ans[2:]
-                print ("play stream number " + s)
-                cmd = "mpc play " + s  + limitMPCoutput
-                subprocess.call(cmd, shell=True)
+                switchStation(int(s))
             else:
                 # play
                 print("play")
@@ -365,73 +350,29 @@ try:
                 currentVolume = 0
             cmd = "amixer set Digital " + str(currentVolume) + "%"
             subprocess.call(cmd, shell=True)
-        elif ans != "" and ans[0] == "a":
-            ans2 = ans[1:]
-            if ans2 != "" and ans[1] == "=":
-                try:
-                    # add stream
-                    file = ans[2:]
-                    print ("add stream " + file)
-                    dirName = os.path.join(directoryStations, file)
-                    fileName = "file://" + dirName
-                    # Use add to add to end rather than insert which puts after current
-                    cmd = 'mpc add ' + '"' + fileName + '"'
-                    print(cmd)
-                    subprocess.call(cmd, shell=True)
-                except Exception as ex:
-                    printMsg("ERROR: an unhandled exception occurred: " + str(ex))
-                    print ("Add failed for: " + fileName)
         elif ans == "C":
-            # Display current playlist
-            print("Current playlist = " + currentPlaylist)
-        elif ans != "" and ans[0] == "d":
-            ans2 = ans[1:]
-            if ans2 != "" and ans[1] == "=":
-                # delete stream number n
-                s = ans[2:]
-                print ("delete stream number " + s)
-                cmd = "mpc del " + s + limitMPCoutput
-                subprocess.call(cmd, shell=True)
-            else:
-                # play
-                print("delete current stream")
-                cmd = "mpc del 0 " + limitMPCoutput
-                subprocess.call(cmd, shell=True)
-        elif ans == "D":
-            if currentPlaylist == defaultPlaylist:
-                print("Cannot delete all streams from default playlist")
-            else:
-                # Delete all streams from the playlist
-                cmd = "mpc stop " + limitMPCoutput
-                subprocess.call(cmd, shell=True)
-                cmd = "mpc clear " + limitMPCoutput
-                subprocess.call(cmd, shell=True)
+            # Display current station
+            s = stationList[cStation][0]
+            print("Station playing = " + s)
+            s = stationList[cStation][1]
+            print("Description     = " + s)
         elif ans != "" and ans[0] == "f":
             ans2 = ans[1:]
             if ans2 != "" and ans[1] == "=":
-                # find and play stream containing string s
-                print("find and play")
-                s = ans[2:]
-                cmd = "mpc searchplay title " + s
-                subprocess.call(cmd, shell=True)
+                # find and play station description containing string t
+                t = ans[2:]
+                print("find and play station containing " + t)
+                i = 0
+                for s in stationList:
+                    # if t in s[1]
+                    if t in s[1]:
+                        print (str(i) + ": " + s[0] + ", " + s[1])
+                        switchStation(i)
+                        cStation = i
+                        break
+                    i += 1
             else:
                 print("f requires a string")
-        elif ans != "" and ans[0] == "I":
-            # initialize playlist
-            ans2 = ans[1:]
-            if ans2 != "" and ans[1] == "=":
-                n = ans[2:]
-            else:
-                n = defaultPlaylist
-            initPlaylist(n)
-            currentPlaylist = n
-        elif ans != "" and ans[0] == "L":
-            # Load playlist
-            ans2 = ans[1:]
-            if ans2 != "" and ans[1] == "=":
-                n = ans[2:]
-                initPlaylist(n)
-                currentPlaylist = n
         elif ans == "m":
             # mute
             muteVolume = not muteVolume
@@ -448,55 +389,35 @@ try:
         elif ans == "n":
             # next
             print("next")
-            cmd = "mpc next " + limitMPCoutput
-            subprocess.call(cmd, shell=True)
+            incrementCurrentStation(1)
+            switchStation(int(cStation))
         elif ans == "o":
             # shutoff raspberry pi and radio
             sys.exit()
         elif ans == "p":
             # previous
             print("previous")
-            cmd = "mpc prev " + limitMPCoutput
-            subprocess.call(cmd, shell=True)
-        elif ans == "P":
-            # List all playlists
-            cmd = "mpc lsplaylists"
-            subprocess.call(cmd, shell=True)
-        elif ans != "" and ans[0] == "R":
-            # Remove playlist
-            ans2 = ans[1:]
-            if ans2 != "" and ans[1] == "=":
-                n = ans[2:]
-                removePlaylist(n)
-            else:
-                removePlaylist(currentPlaylist)
+            incrementCurrentStation(-1)
+            switchStation(int(cStation))
         elif ans != "" and ans[0] == "s":
             ans2 = ans[1:]
             if ans2 != "" and ans[1] == "=":
-                # search streams in playlist containing string s
+                # search brief description in stationList to find string t
                 print ("find and list streams matching a string (case sensitive)")
-                s = ans[2:]
-                cmd = "mpc playlist | grep -n " + s
-                subprocess.call(cmd, shell=True)
+                t = ans[2:]
+                # list all stations
+                i = 0
+                for s in stationList:
+                    # if t in s[1]
+                    if t in s[1]:
+                        print (str(i) + ": " + s[0] + ", " + s[1])
+                    i += 1
             else:
-                # list all streams in playlist
-                print ("list all streams in playlist")
-                cmd = "mpc playlist | grep -n '-'"
-                subprocess.call(cmd, shell=True)
-        elif ans != "" and ans[0] == "S":
-            # Save playlist
-            ans2 = ans[1:]
-            if ans2 != "" and ans[1] == "=":
-                # Save playlist as n
-                n = ans[2:]
-                print ("save playlist as " + n)
-                cmd = "mpc save " + n
-                subprocess.call(cmd, shell=True)
-            else:
-                # Save current playlist
-                print ("save current playlist")
-                cmd = "mpc save " + currentPlaylist + limitMPCoutput
-                subprocess.call(cmd, shell=True)
+                # list all stations
+                i = 0
+                for s in stationList:
+                    print (str(i) + ": " + s[0] + ", " + s[1])
+                    i += 1
         elif ans == "x":
             # exit and leave music playing
             sys.exit()
